@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Localizador</title>
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;max-width:980px;margin:24px auto;padding:0 16px}
+    h1{margin:0 0 6px}
+    .muted{color:#666;font-size:14px;margin:0 0 16px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    input{flex:1;min-width:280px;padding:12px;font-size:16px}
+    button{padding:12px 14px;font-size:16px;cursor:pointer}
+    textarea{width:100%;min-height:220px;padding:12px;font-size:13px;line-height:1.35;margin-top:12px}
+    .card{border:1px solid #ddd;border-radius:10px;padding:12px;margin-top:12px}
+    .code{font-weight:700}
+    .tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid #ddd;margin-left:8px}
+    .warn{border-color:#f0c36d;background:#fff8e6}
+    .ok{border-color:#cfe7cf;background:#f6fff6}
+    .list{margin:8px 0 0 18px}
+    .small{font-size:12px;color:#666}
+  </style>
+</head>
+<body>
+  <h1>Localizador</h1>
+  <p class="muted">Digite código, descrição ou ambos (ex.: <b>727 tray</b>). O código <b>13458</b> fica único; os demais podem repetir.</p>
+
+  <div class="row">
+    <input id="q" placeholder="Buscar: 8359727, tray, 13422 nest, etc." autocomplete="off" />
+    <button id="btn">Buscar</button>
+    <button id="btnClear">Limpar</button>
+  </div>
+
+  <div class="card">
+    <div><b>Base de dados (cole/edite aqui)</b> <span class="small">Formato: CÓDIGO[TAB ou espaços]DESCRIÇÃO (1 por linha)</span></div>
+    <textarea id="db"></textarea>
+    <div class="small">Se o mesmo código aparecer com descrições diferentes, aparecerá como “CONFLITO”.</div>
+  </div>
+
+  <div id="out"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const norm = (s) => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+
+  function parseDB(raw) {
+    const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const items = [];
+    let seen13458 = false;
+
+    for (const line of lines) {
+      const cleaned = line.replace(/^•\s*/, "");
+      let parts = cleaned.split("\t");
+      if (parts.length < 2) parts = cleaned.split(/\s{2,}/);
+      if (parts.length < 2) {
+        const m = cleaned.match(/^(\S+)\s+(.+)$/);
+        if (!m) continue;
+        parts = [m[1], m[2]];
+      }
+
+      const code = (parts[0] || "").trim();
+      const desc = parts.slice(1).join(" ").trim();
+      if (!code || !desc) continue;
+
+      if (code === "13458") { // único
+        if (seen13458) continue;
+        seen13458 = true;
+      }
+
+      items.push({ code, desc });
+    }
+    return items;
+  }
+
+  function buildIndex(items) {
+    const byCode = new Map(); // code -> array de descrições (com repetição)
+    for (const it of items) {
+      const key = it.code.trim();
+      if (!byCode.has(key)) byCode.set(key, []);
+      byCode.get(key).push(it.desc.trim());
+    }
+    return { byCode, items };
+  }
+
+  function tokenize(q) { return norm(q).split(" ").filter(Boolean); }
+
+  function search(index, query) {
+    const qn = norm(query);
+    if (!qn) return [];
+
+    // match exato do código
+    for (const code of index.byCode.keys()) {
+      if (norm(code) === qn) return [{ code, descs: index.byCode.get(code), score: 999 }];
+    }
+
+    const toks = tokenize(query);
+    const scored = new Map();
+
+    for (const { code, desc } of index.items) {
+      const hay = norm(code + " " + desc);
+      let score = 0;
+
+      for (const t of toks) {
+        if (norm(code) === t) score += 50;
+        if (norm(code).startsWith(t)) score += 15;
+        if (hay.includes(t)) score += 10;
+      }
+
+      const all = toks.every(t => hay.includes(t));
+      if (all) score += 25;
+
+      if (score > 0) {
+        const prev = scored.get(code);
+        if (!prev || score > prev.score) {
+          scored.set(code, { code, descs: index.byCode.get(code) || [desc], score });
+        }
+      }
+    }
+
+    return Array.from(scored.values()).sort((a,b)=>b.score-a.score).slice(0, 30);
+  }
+
+  function escapeHtml(s){
+    return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function render(hits) {
+    const out = $("out");
+    out.innerHTML = "";
+    if (!hits.length) {
+      out.innerHTML = `<div class="card warn"><b>Nenhum resultado.</b><div class="small">Verifique código/descrição.</div></div>`;
+      return;
+    }
+
+    for (const h of hits) {
+      const uniqueDescs = Array.from(new Set(h.descs || []));
+      const conflict = uniqueDescs.length > 1;
+      const cls = conflict ? "card warn" : "card ok";
+      const tag = conflict ? `<span class="tag">CONFLITO</span>` : `<span class="tag">OK</span>`;
+      const descList = uniqueDescs.map(d => `<li>${escapeHtml(d)}</li>`).join("");
+      out.insertAdjacentHTML("beforeend", `
+        <div class="${cls}">
+          <div><span class="code">${escapeHtml(h.code)}</span> ${tag}</div>
+          <ul class="list">${descList}</ul>
+          <div class="small">Score: ${h.score}</div>
+        </div>
+      `);
+    }
+  }
+
+  // Cole sua lista aqui (você pode editar depois na própria página)
+  const seed = `13422\tNEST BARREL 20ML
+13548\tTUB 6IN
+19187SWI\tRESIN
+32665SWI\tCARDBOARD SHIPPER 585
+50006730\tSHIPPER 585
+8359727\tTRAY
+8359728\tTRAY
+8547028\tNEST BARREL 5ML
+8547526\tTRAY VYSTRA
+8606104\tCAP BMS YELLOW
+8606105\tTOP BODY
+8606107\tCAP 8MM
+8606108\tBUTTON GREEN
+88721SWI\tBODY`;
+
+  $("db").value = seed;
+
+  function run(){
+    const items = parseDB($("db").value);
+    const index = buildIndex(items);
+    const hits = search(index, $("q").value);
+    render(hits);
+  }
+
+  $("btn").onclick = run;
+  $("btnClear").onclick = () => { $("q").value=""; $("out").innerHTML=""; $("q").focus(); };
+  $("q").addEventListener("keydown", (e)=>{ if(e.key==="Enter") run(); });
+
+</script>
+</body>
+</html>
