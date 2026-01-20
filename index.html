@@ -12,171 +12,88 @@
     input{flex:1;min-width:280px;padding:12px;font-size:16px}
     button{padding:12px 14px;font-size:16px;cursor:pointer}
     textarea{width:100%;min-height:220px;padding:12px;font-size:13px;line-height:1.35;margin-top:12px}
-    .card{border:1px solid #ddd;border-radius:10px;padding:12px;margin-top:12px}
-    .code{font-weight:700}
-    .tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid #ddd;margin-left:8px}
-    .warn{border-color:#f0c36d;background:#fff8e6}
-    .ok{border-color:#cfe7cf;background:#f6fff6}
-    .list{margin:8px 0 0 18px}
-    .small{font-size:12px;color:#666}
+    table{width:100%;border-collapse:collapse;margin-top:20px}
+    th, td{padding:8px 12px;border:1px solid #ddd;text-align:left}
+    th{background-color:#f4f4f4}
+    tr:nth-child(even){background-color:#f9f9f9}
+    .search-result{margin-top:20px}
   </style>
 </head>
 <body>
-  <h1>Localizador</h1>
-  <p class="muted">Digite código, descrição ou ambos (ex.: <b>727 tray</b>). O código <b>13458</b> fica único; os demais podem repetir.</p>
+
+  <h1>Localizador de Produtos</h1>
+  <p class="muted">Digite o número ou nome do produto para localizar rapidamente na lista abaixo.</p>
 
   <div class="row">
-    <input id="q" placeholder="Buscar: 8359727, tray, 13422 nest, etc." autocomplete="off" />
-    <button id="btn">Buscar</button>
-    <button id="btnClear">Limpar</button>
+    <input type="text" id="searchInput" placeholder="Buscar produto..." onkeyup="filterList()">
+    <button onclick="filterList()">Buscar</button>
   </div>
 
-  <div class="card">
-    <div><b>Base de dados (cole/edite aqui)</b> <span class="small">Formato: CÓDIGO[TAB ou espaços]DESCRIÇÃO (1 por linha)</span></div>
-    <textarea id="db"></textarea>
-    <div class="small">Se o mesmo código aparecer com descrições diferentes, aparecerá como “CONFLITO”.</div>
-  </div>
+  <table id="productTable">
+    <thead>
+      <tr>
+        <th>Código</th>
+        <th>Produto</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>13422</td><td>NEST BARREL 20ML</td></tr>
+      <tr><td>13548</td><td>TUB 6IN</td></tr>
+      <tr><td>19187SWI</td><td>RESIN</td></tr>
+      <tr><td>32665SWI</td><td>CARDBOARD SHIPPER 585</td></tr>
+      <tr><td>50006730</td><td>SHIPPER 585</td></tr>
+      <tr><td>500016154</td><td>DOUBLE CLICKER</td></tr>
+      <tr><td>500016155</td><td>LEAD SCREW VYSTRA</td></tr>
+      <tr><td>500021560</td><td>INFUSION GREY</td></tr>
+      <tr><td>500034774</td><td>CASE CORR</td></tr>
+      <tr><td>500045600</td><td>DOSE STOP VYSTRA</td></tr>
+      <tr><td>500047210</td><td>VYSTRA BUTTON</td></tr>
+      <tr><td>500049551</td><td>LLA3 POLYCARBONATE CX MARRON</td></tr>
+      <tr><td>500059091</td><td>HYPAK CX MARRON C/ WEST AZUL</td></tr>
+      <tr><td>500067323</td><td>VYSTRA TOWEL</td></tr>
+      <tr><td>700011870</td><td>BOTTOM BODY</td></tr>
+      <tr><td>700024880</td><td>VYSTRA</td></tr>
+      <tr><td>700036800</td><td>HYPAC CX MARRON</td></tr>
+      <tr><td>700037110</td><td>HYPAC LLA CX MARRON</td></tr>
+      <tr><td>700037348</td><td>NEEDLE COVER</td></tr>
+      <!-- Adicione o restante dos produtos aqui... -->
+    </tbody>
+  </table>
 
-  <div id="out"></div>
+  <div id="searchResult" class="search-result"></div>
 
-<script>
-  const $ = (id) => document.getElementById(id);
-  const norm = (s) => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+  <script>
+    function filterList() {
+      var input = document.getElementById('searchInput');
+      var filter = input.value.toLowerCase();
+      var table = document.getElementById("productTable");
+      var tr = table.getElementsByTagName("tr");
+      var found = false;
 
-  function parseDB(raw) {
-    const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const items = [];
-    let seen13458 = false;
-
-    for (const line of lines) {
-      const cleaned = line.replace(/^•\s*/, "");
-      let parts = cleaned.split("\t");
-      if (parts.length < 2) parts = cleaned.split(/\s{2,}/);
-      if (parts.length < 2) {
-        const m = cleaned.match(/^(\S+)\s+(.+)$/);
-        if (!m) continue;
-        parts = [m[1], m[2]];
-      }
-
-      const code = (parts[0] || "").trim();
-      const desc = parts.slice(1).join(" ").trim();
-      if (!code || !desc) continue;
-
-      if (code === "13458") { // único
-        if (seen13458) continue;
-        seen13458 = true;
-      }
-
-      items.push({ code, desc });
-    }
-    return items;
-  }
-
-  function buildIndex(items) {
-    const byCode = new Map(); // code -> array de descrições (com repetição)
-    for (const it of items) {
-      const key = it.code.trim();
-      if (!byCode.has(key)) byCode.set(key, []);
-      byCode.get(key).push(it.desc.trim());
-    }
-    return { byCode, items };
-  }
-
-  function tokenize(q) { return norm(q).split(" ").filter(Boolean); }
-
-  function search(index, query) {
-    const qn = norm(query);
-    if (!qn) return [];
-
-    // match exato do código
-    for (const code of index.byCode.keys()) {
-      if (norm(code) === qn) return [{ code, descs: index.byCode.get(code), score: 999 }];
-    }
-
-    const toks = tokenize(query);
-    const scored = new Map();
-
-    for (const { code, desc } of index.items) {
-      const hay = norm(code + " " + desc);
-      let score = 0;
-
-      for (const t of toks) {
-        if (norm(code) === t) score += 50;
-        if (norm(code).startsWith(t)) score += 15;
-        if (hay.includes(t)) score += 10;
-      }
-
-      const all = toks.every(t => hay.includes(t));
-      if (all) score += 25;
-
-      if (score > 0) {
-        const prev = scored.get(code);
-        if (!prev || score > prev.score) {
-          scored.set(code, { code, descs: index.byCode.get(code) || [desc], score });
+      // Loop through all table rows, and hide those that don't match the search
+      for (var i = 1; i < tr.length; i++) {  // start at 1 to skip the header row
+        var td = tr[i].getElementsByTagName("td");
+        if (td) {
+          var code = td[0].textContent || td[0].innerText;
+          var product = td[1].textContent || td[1].innerText;
+          if (code.toLowerCase().indexOf(filter) > -1 || product.toLowerCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+            found = true;
+          } else {
+            tr[i].style.display = "none";
+          }
         }
       }
+
+      // Display message if no matches
+      var resultDiv = document.getElementById("searchResult");
+      if (!found) {
+        resultDiv.innerHTML = "<p>Nenhum produto encontrado para sua busca.</p>";
+      } else {
+        resultDiv.innerHTML = "";
+      }
     }
+  </script>
 
-    return Array.from(scored.values()).sort((a,b)=>b.score-a.score).slice(0, 30);
-  }
-
-  function escapeHtml(s){
-    return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-
-  function render(hits) {
-    const out = $("out");
-    out.innerHTML = "";
-    if (!hits.length) {
-      out.innerHTML = `<div class="card warn"><b>Nenhum resultado.</b><div class="small">Verifique código/descrição.</div></div>`;
-      return;
-    }
-
-    for (const h of hits) {
-      const uniqueDescs = Array.from(new Set(h.descs || []));
-      const conflict = uniqueDescs.length > 1;
-      const cls = conflict ? "card warn" : "card ok";
-      const tag = conflict ? `<span class="tag">CONFLITO</span>` : `<span class="tag">OK</span>`;
-      const descList = uniqueDescs.map(d => `<li>${escapeHtml(d)}</li>`).join("");
-      out.insertAdjacentHTML("beforeend", `
-        <div class="${cls}">
-          <div><span class="code">${escapeHtml(h.code)}</span> ${tag}</div>
-          <ul class="list">${descList}</ul>
-          <div class="small">Score: ${h.score}</div>
-        </div>
-      `);
-    }
-  }
-
-  // Cole sua lista aqui (você pode editar depois na própria página)
-  const seed = `13422\tNEST BARREL 20ML
-13548\tTUB 6IN
-19187SWI\tRESIN
-32665SWI\tCARDBOARD SHIPPER 585
-50006730\tSHIPPER 585
-8359727\tTRAY
-8359728\tTRAY
-8547028\tNEST BARREL 5ML
-8547526\tTRAY VYSTRA
-8606104\tCAP BMS YELLOW
-8606105\tTOP BODY
-8606107\tCAP 8MM
-8606108\tBUTTON GREEN
-88721SWI\tBODY`;
-
-  $("db").value = seed;
-
-  function run(){
-    const items = parseDB($("db").value);
-    const index = buildIndex(items);
-    const hits = search(index, $("q").value);
-    render(hits);
-  }
-
-  $("btn").onclick = run;
-  $("btnClear").onclick = () => { $("q").value=""; $("out").innerHTML=""; $("q").focus(); };
-  $("q").addEventListener("keydown", (e)=>{ if(e.key==="Enter") run(); });
-
-</script>
 </body>
 </html>
